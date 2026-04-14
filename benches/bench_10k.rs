@@ -3,6 +3,7 @@
 //! Tests SaveWorld and LoadWorld performance with a realistic entity layout
 //! where all 10 components live on every entity.
 
+use bevy::ecs::query::QueryState;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 use bevy_ggrs::prelude::*;
