@@ -64,10 +64,10 @@ where
 {
     /// Save system for types where `Stored: Clone`.
     ///
-    /// Three paths:
-    /// - 0 changed, previous exists → clone previous (one memcpy)
-    /// - k changed, previous exists → clone previous + patch k entries
-    /// - no previous (frame 0) → full rebuild from all entities
+    /// Uses Arc-based copy-on-write:
+    /// - 0 changed → Arc clone (refcount bump, O(1))
+    /// - k changed → Arc clone + make_mut + patch k entries
+    /// - no previous (frame 0) → full rebuild
     pub fn save_cloneable(
         mut snapshots: ResMut<GgrsComponentSnapshots<S::Target, S::Stored>>,
         frame: Res<RollbackFrameCount>,
@@ -79,20 +79,20 @@ where
         let frame_val = frame.0;
 
         // Try incremental path when we have a previous snapshot
-        if let Some(prev) = snapshots.peek(frame_val - 1) {
+        if let Some(prev) = snapshots.peek_latest() {
             if changed_query.is_empty() {
-                // Nothing changed → pure clone
-                let reused = GgrsComponentSnapshot::from_sorted_entries(prev.entries().clone());
+                // Nothing changed → Arc clone (refcount bump only)
+                let reused = GgrsComponentSnapshot::share_arc_from(prev);
                 snapshots.push(frame_val, reused);
                 return;
             }
 
-            // k entities changed → clone + patch
-            let mut snapshot = GgrsComponentSnapshot::from_sorted_entries(prev.entries().clone());
+            // k entities changed → Arc clone + COW patch
+            let mut snapshot = GgrsComponentSnapshot::share_arc_from(prev);
             let changes = changed_query
                 .iter()
                 .map(|(&rollback, component)| (rollback, S::store(component)));
-            snapshot.patch(changes);
+            snapshot.patch(changes); // make_mut triggers Vec clone only on first write
             snapshots.push(frame_val, snapshot);
             return;
         }

@@ -12,7 +12,7 @@
 use crate::{DEFAULT_FPS, MaxPredictionWindow};
 use bevy::{ecs::schedule::ScheduleLabel, prelude::*};
 use seahash::SeaHasher;
-use std::{collections::VecDeque, marker::PhantomData};
+use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
 
 mod checksum;
 mod childof_snapshot;
@@ -242,6 +242,12 @@ impl<For, As> GgrsSnapshots<For, As> {
         self.snapshots.get(index)
     }
 
+    /// Get the most recent snapshot (frame at front of deque).
+    /// This is O(1) — used by save systems to peek at the previous frame.
+    pub fn peek_latest(&self) -> Option<&As> {
+        self.snapshots.front()
+    }
+
     /// A system which automatically confirms the [`ConfirmedFrameCount`], discarding older snapshots.
     pub fn discard_old_snapshots(
         mut snapshots: ResMut<Self>,
@@ -274,21 +280,23 @@ impl<For, As> GgrsSnapshots<For, As> {
 }
 
 /// A storage type suitable for per-[`Entity`] snapshots, such as [`Component`] types.
+/// A storage type suitable for per-[`Entity`] snapshots, such as [`Component`] types.
 ///
-/// Internally uses a sorted dense `Vec<(RollbackId, As)>` instead of a `HashMap`.
-/// This avoids per-entry hashing overhead and improves cache locality for large entity counts.
-/// `get()` uses binary search (O(log n)); `new()` sorts after collecting (O(n log n)).
+/// Uses `Arc<Vec<(RollbackId, As)>>` for copy-on-write semantics:
+/// - Cloning a snapshot is O(1) (Arc refcount bump)
+/// - Mutation triggers `Arc::make_mut` which clones the Vec only on first write
+/// - Unchanged snapshots share the same allocation across frames
 #[derive(Clone)]
 pub struct GgrsComponentSnapshot<For, As = For> {
-    /// Sorted by `RollbackId` for O(log n) lookups.
-    entries: Vec<(RollbackId, As)>,
+    /// Sorted by `RollbackId` for O(log n) lookups. Arc for cheap cloning.
+    entries: Arc<Vec<(RollbackId, As)>>,
     _phantom: PhantomData<For>,
 }
 
 impl<For, As> Default for GgrsComponentSnapshot<For, As> {
     fn default() -> Self {
         Self {
-            entries: Vec::new(),
+            entries: Arc::new(Vec::new()),
             _phantom: default(),
         }
     }
@@ -301,17 +309,21 @@ impl<For, As> GgrsComponentSnapshot<For, As> {
         let mut entries: Vec<_> = components.into_iter().collect();
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         Self {
-            entries,
+            entries: Arc::new(entries),
             _phantom: default(),
         }
     }
 
     /// Insert a single snapshot for the provided [`Rollback`].
-    /// Maintains sorted order via binary-search insertion.
-    pub fn insert(&mut self, entity: RollbackId, snapshot: As) -> &mut Self {
-        match self.entries.binary_search_by(|(id, _)| id.cmp(&entity)) {
-            Ok(idx) => self.entries[idx].1 = snapshot,
-            Err(idx) => self.entries.insert(idx, (entity, snapshot)),
+    /// Triggers COW clone if the Arc is shared. Maintains sorted order.
+    pub fn insert(&mut self, entity: RollbackId, snapshot: As) -> &mut Self
+    where
+        As: Clone,
+    {
+        let entries = Arc::make_mut(&mut self.entries);
+        match entries.binary_search_by(|(id, _)| id.cmp(&entity)) {
+            Ok(idx) => entries[idx].1 = snapshot,
+            Err(idx) => entries.insert(idx, (entity, snapshot)),
         }
         self
     }
@@ -343,7 +355,16 @@ impl<For, As> GgrsComponentSnapshot<For, As> {
     /// The caller must ensure entries are sorted by `RollbackId`.
     pub fn from_sorted_entries(entries: Vec<(RollbackId, As)>) -> Self {
         Self {
-            entries,
+            entries: Arc::new(entries),
+            _phantom: default(),
+        }
+    }
+
+    /// Create a snapshot that shares the same Arc as another.
+    /// This is O(1) — just bumps the refcount.
+    pub fn share_arc_from(other: &Self) -> Self {
+        Self {
+            entries: Arc::clone(&other.entries),
             _phantom: default(),
         }
     }
@@ -355,11 +376,16 @@ impl<For, As> GgrsComponentSnapshot<For, As> {
 
     /// Update entries in-place using binary search. Entries not in `changes` are left untouched.
     /// New entries (not in current snapshot) are inserted maintaining sort order.
-    pub fn patch(&mut self, changes: impl IntoIterator<Item = (RollbackId, As)>) {
+    /// Triggers COW clone if the Arc is shared.
+    pub fn patch(&mut self, changes: impl IntoIterator<Item = (RollbackId, As)>)
+    where
+        As: Clone,
+    {
+        let entries = Arc::make_mut(&mut self.entries);
         for (id, val) in changes {
-            match self.entries.binary_search_by(|(eid, _)| eid.cmp(&id)) {
-                Ok(idx) => self.entries[idx].1 = val,
-                Err(idx) => self.entries.insert(idx, (id, val)),
+            match entries.binary_search_by(|(eid, _)| eid.cmp(&id)) {
+                Ok(idx) => entries[idx].1 = val,
+                Err(idx) => entries.insert(idx, (id, val)),
             }
         }
     }
