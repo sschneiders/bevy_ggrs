@@ -231,6 +231,7 @@ impl<C: Config> Plugin for GgrsPlugin<C> {
             .init_resource::<MaxPredictionWindow>()
             .init_resource::<LocalPlayers>()
             .init_resource::<FixedTimestepData>()
+            .init_resource::<crate::GgrsPaused>()
             .init_schedule(ReadInputs)
             .edit_schedule(AdvanceWorld, |schedule| {
                 // AdvanceWorld is mostly a facilitator for GgrsSchedule, so SingleThreaded avoids overhead
