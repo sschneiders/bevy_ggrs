@@ -203,9 +203,45 @@ fn bench_load(c: &mut Criterion) {
     });
 }
 
+/// Benchmark: Full rollback cycle — save 7 frames, rollback to frame 0, resimulate to 7
+/// This is the real-world scenario: load → advance → save → advance → save → ...
+fn bench_rollback_cycle(c: &mut Criterion) {
+    let mut group = c.benchmark_group("rollback_cycle_10k_12_components");
+    group.sample_size(30);
+
+    // Test with different rollback depths
+    for &depth in &[3, 7, 12] {
+        group.bench_function(format!("depth_{depth}"), |b| {
+            b.iter(|| {
+                let mut app = build_app();
+                app.add_systems(AdvanceWorld, update_movement);
+                app.update();
+                app.world_mut().run_system_once(spawn_entities).unwrap();
+                app.world_mut().run_schedule(SaveWorld); // frame 0
+
+                // Save `depth` frames forward
+                for _ in 0..depth {
+                    advance_and_save(&mut app);
+                }
+
+                // Rollback to frame 0
+                app.insert_resource(RollbackFrameCount(0));
+                app.world_mut().run_schedule(LoadWorld);
+
+                // Resimulate `depth` frames forward
+                for _ in 0..depth {
+                    app.world_mut().run_schedule(AdvanceWorld);
+                    app.world_mut().run_schedule(SaveWorld);
+                }
+            })
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     name = benches;
     config = Criterion::default().sample_size(50);
-    targets = bench_save_no_mutation, bench_save_partial_mutation, bench_save_all_mutation, bench_load
+    targets = bench_save_no_mutation, bench_save_partial_mutation, bench_save_all_mutation, bench_load, bench_rollback_cycle
 );
 criterion_main!(benches);
