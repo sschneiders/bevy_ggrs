@@ -352,6 +352,17 @@ impl<For, As> GgrsComponentSnapshot<For, As> {
     pub fn entries(&self) -> &Vec<(RollbackId, As)> {
         &self.entries
     }
+
+    /// Update entries in-place using binary search. Entries not in `changes` are left untouched.
+    /// New entries (not in current snapshot) are inserted maintaining sort order.
+    pub fn patch(&mut self, changes: impl IntoIterator<Item = (RollbackId, As)>) {
+        for (id, val) in changes {
+            match self.entries.binary_search_by(|(eid, _)| eid.cmp(&id)) {
+                Ok(idx) => self.entries[idx].1 = val,
+                Err(idx) => self.entries.insert(idx, (id, val)),
+            }
+        }
+    }
 }
 
 /// Returns a hasher built using the `seahash` library appropriate for creating portable checksums.

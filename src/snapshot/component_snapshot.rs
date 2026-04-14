@@ -63,38 +63,45 @@ where
     S::Stored: Send + Sync + 'static,
 {
     /// Save system for types where `Stored: Clone`.
-    /// Uses `Changed<T>` to skip the full query when nothing changed.
+    ///
+    /// Three paths:
+    /// - 0 changed, previous exists → clone previous (one memcpy)
+    /// - k changed, previous exists → clone previous + patch k entries
+    /// - no previous (frame 0) → full rebuild from all entities
     pub fn save_cloneable(
         mut snapshots: ResMut<GgrsComponentSnapshots<S::Target, S::Stored>>,
         frame: Res<RollbackFrameCount>,
-        changed_query: Query<(), (With<RollbackId>, Changed<S::Target>)>,
-        query: Query<(&RollbackId, &S::Target)>,
+        changed_query: Query<(&RollbackId, &S::Target), (With<RollbackId>, Changed<S::Target>)>,
+        full_query: Query<(&RollbackId, &S::Target)>,
     ) where
         S::Stored: Clone,
     {
         let frame_val = frame.0;
 
-        // Fast path: nothing changed → clone previous snapshot's entry Vec
-        if changed_query.is_empty() {
-            if let Some(prev) = snapshots.peek(frame_val - 1) {
+        // Try incremental path when we have a previous snapshot
+        if let Some(prev) = snapshots.peek(frame_val - 1) {
+            if changed_query.is_empty() {
+                // Nothing changed → pure clone
                 let reused = GgrsComponentSnapshot::from_sorted_entries(prev.entries().clone());
                 snapshots.push(frame_val, reused);
                 return;
             }
+
+            // k entities changed → clone + patch
+            let mut snapshot = GgrsComponentSnapshot::from_sorted_entries(prev.entries().clone());
+            let changes = changed_query
+                .iter()
+                .map(|(&rollback, component)| (rollback, S::store(component)));
+            snapshot.patch(changes);
+            snapshots.push(frame_val, snapshot);
+            return;
         }
 
-        // Slow path: rebuild full snapshot
-        let components = query
+        // No previous snapshot (first frame ever) → full rebuild
+        let components = full_query
             .iter()
             .map(|(&rollback, component)| (rollback, S::store(component)));
         let snapshot = GgrsComponentSnapshot::new(components);
-
-        trace!(
-            "Snapshot {} {} component(s)",
-            snapshot.iter().count(),
-            disqualified::ShortName::of::<S::Target>()
-        );
-
         snapshots.push(frame_val, snapshot);
     }
 
