@@ -55,3 +55,7 @@ path = "examples/stress_tests/particles.rs"
 [[bench]]
 name = "bench"
 harness = false
+
+[[bench]]
+name = "bench_10k"
+harness = false
