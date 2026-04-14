@@ -48,7 +48,7 @@ struct Inventory(Vec<u8>);
 #[derive(Component, Clone)]
 struct NameTag(String);
 
-const ENTITY_COUNT: usize = 10_000;
+const ENTITY_COUNT: usize = 1_000_000;
 
 fn spawn_entities(mut commands: Commands) {
     for i in 0..ENTITY_COUNT {
