@@ -64,10 +64,10 @@ where
 {
     /// Save system for types where `Stored: Clone`.
     ///
-    /// Uses Arc-based copy-on-write:
+    /// Three paths:
     /// - 0 changed → Arc clone (refcount bump, O(1))
-    /// - k changed → Arc clone + make_mut + patch k entries
-    /// - no previous (frame 0) → full rebuild
+    /// - few changed (<50%) → Arc COW + patch k entries
+    /// - many changed (>=50%) → full rebuild (cheaper than clone+patch)
     pub fn save_cloneable(
         mut snapshots: ResMut<GgrsComponentSnapshots<S::Target, S::Stored>>,
         frame: Res<RollbackFrameCount>,
@@ -80,19 +80,33 @@ where
 
         // Try incremental path when we have a previous snapshot
         if let Some(prev) = snapshots.peek_latest() {
-            if changed_query.is_empty() {
+            let prev_len = prev.len();
+            let changes: Vec<_> = changed_query
+                .iter()
+                .map(|(&rollback, component)| (rollback, S::store(component)))
+                .collect();
+
+            if changes.is_empty() {
                 // Nothing changed → Arc clone (refcount bump only)
                 let reused = GgrsComponentSnapshot::share_arc_from(prev);
                 snapshots.push(frame_val, reused);
                 return;
             }
 
-            // k entities changed → Arc clone + COW patch
+            // If most entities changed, full rebuild is cheaper than clone+patch
+            // (avoids Arc overhead + n×binary_search in patch)
+            if changes.len() * 2 >= prev_len {
+                let components = full_query
+                    .iter()
+                    .map(|(&rollback, component)| (rollback, S::store(component)));
+                let snapshot = GgrsComponentSnapshot::new(components);
+                snapshots.push(frame_val, snapshot);
+                return;
+            }
+
+            // Few changed → Arc clone + COW patch
             let mut snapshot = GgrsComponentSnapshot::share_arc_from(prev);
-            let changes = changed_query
-                .iter()
-                .map(|(&rollback, component)| (rollback, S::store(component)));
-            snapshot.patch(changes); // make_mut triggers Vec clone only on first write
+            snapshot.patch(changes);
             snapshots.push(frame_val, snapshot);
             return;
         }
