@@ -278,6 +278,7 @@ impl<For, As> GgrsSnapshots<For, As> {
 /// Internally uses a sorted dense `Vec<(RollbackId, As)>` instead of a `HashMap`.
 /// This avoids per-entry hashing overhead and improves cache locality for large entity counts.
 /// `get()` uses binary search (O(log n)); `new()` sorts after collecting (O(n log n)).
+#[derive(Clone)]
 pub struct GgrsComponentSnapshot<For, As = For> {
     /// Sorted by `RollbackId` for O(log n) lookups.
     entries: Vec<(RollbackId, As)>,
@@ -336,6 +337,20 @@ impl<For, As> GgrsComponentSnapshot<For, As> {
     /// Returns `true` if there are no entries.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Create a snapshot from a pre-sorted Vec of entries.
+    /// The caller must ensure entries are sorted by `RollbackId`.
+    pub fn from_sorted_entries(entries: Vec<(RollbackId, As)>) -> Self {
+        Self {
+            entries,
+            _phantom: default(),
+        }
+    }
+
+    /// Get a reference to the underlying entries.
+    pub fn entries(&self) -> &Vec<(RollbackId, As)> {
+        &self.entries
     }
 }
 

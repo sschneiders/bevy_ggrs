@@ -62,8 +62,45 @@ where
     S::Target: Component,
     S::Stored: Send + Sync + 'static,
 {
-    /// System that snapshots all instances of the component on rollback entities for this frame.
-    pub fn save(
+    /// Save system for types where `Stored: Clone`.
+    /// Uses `Changed<T>` to skip the full query when nothing changed.
+    pub fn save_cloneable(
+        mut snapshots: ResMut<GgrsComponentSnapshots<S::Target, S::Stored>>,
+        frame: Res<RollbackFrameCount>,
+        changed_query: Query<(), (With<RollbackId>, Changed<S::Target>)>,
+        query: Query<(&RollbackId, &S::Target)>,
+    ) where
+        S::Stored: Clone,
+    {
+        let frame_val = frame.0;
+
+        // Fast path: nothing changed → clone previous snapshot's entry Vec
+        if changed_query.is_empty() {
+            if let Some(prev) = snapshots.peek(frame_val - 1) {
+                let reused = GgrsComponentSnapshot::from_sorted_entries(prev.entries().clone());
+                snapshots.push(frame_val, reused);
+                return;
+            }
+        }
+
+        // Slow path: rebuild full snapshot
+        let components = query
+            .iter()
+            .map(|(&rollback, component)| (rollback, S::store(component)));
+        let snapshot = GgrsComponentSnapshot::new(components);
+
+        trace!(
+            "Snapshot {} {} component(s)",
+            snapshot.iter().count(),
+            disqualified::ShortName::of::<S::Target>()
+        );
+
+        snapshots.push(frame_val, snapshot);
+    }
+
+    /// Save system for types where `Stored` is NOT Clone (e.g. ReflectStrategy).
+    /// Always rebuilds the full snapshot.
+    pub fn save_reflect(
         mut snapshots: ResMut<GgrsComponentSnapshots<S::Target, S::Stored>>,
         frame: Res<RollbackFrameCount>,
         query: Query<(&RollbackId, &S::Target)>,
@@ -71,7 +108,6 @@ where
         let components = query
             .iter()
             .map(|(&rollback, component)| (rollback, S::store(component)));
-
         let snapshot = GgrsComponentSnapshot::new(components);
 
         trace!(
@@ -123,13 +159,14 @@ where
     }
 }
 
+// --- Plugin for Cloneable stored types ---
+
 impl<S> Plugin for ComponentSnapshotPlugin<S>
 where
     S: Send + Sync + 'static + Strategy,
     S::Target: Component<Mutability = Mutable>,
-    S::Stored: Send + Sync + 'static,
+    S::Stored: Send + Sync + Clone + 'static,
 {
-    /// Registers snapshot storage and the save/load systems for this component type.
     fn build(&self, app: &mut App) {
         app.init_resource::<GgrsComponentSnapshots<S::Target, S::Stored>>()
             .add_systems(
@@ -137,12 +174,48 @@ where
                 (
                     GgrsComponentSnapshots::<S::Target, S::Stored>::sync_depth,
                     GgrsComponentSnapshots::<S::Target, S::Stored>::discard_old_snapshots,
-                    Self::save,
+                    Self::save_cloneable,
                 )
                     .chain()
                     .in_set(SaveWorldSystems::Snapshot),
             );
         app.add_systems(LoadWorld, Self::load.in_set(LoadWorldSystems::Data));
+    }
+}
+
+// --- Plugin for non-Cloneable stored types (ReflectStrategy) ---
+
+/// A separate plugin for non-Clone strategies (e.g. ReflectStrategy) that always rebuilds snapshots.
+pub struct ComponentSnapshotReflectPlugin<S>(PhantomData<S>);
+
+impl<S> Default for ComponentSnapshotReflectPlugin<S> {
+    fn default() -> Self {
+        Self(default())
+    }
+}
+
+impl<S> Plugin for ComponentSnapshotReflectPlugin<S>
+where
+    S: Send + Sync + 'static + Strategy,
+    S::Target: Component<Mutability = Mutable>,
+    S::Stored: Send + Sync + 'static,
+{
+    fn build(&self, app: &mut App) {
+        app.init_resource::<GgrsComponentSnapshots<S::Target, S::Stored>>()
+            .add_systems(
+                SaveWorld,
+                (
+                    GgrsComponentSnapshots::<S::Target, S::Stored>::sync_depth,
+                    GgrsComponentSnapshots::<S::Target, S::Stored>::discard_old_snapshots,
+                    ComponentSnapshotPlugin::<S>::save_reflect,
+                )
+                    .chain()
+                    .in_set(SaveWorldSystems::Snapshot),
+            );
+        app.add_systems(
+            LoadWorld,
+            ComponentSnapshotPlugin::<S>::load.in_set(LoadWorldSystems::Data),
+        );
     }
 }
 
@@ -188,7 +261,7 @@ impl<S> Plugin for ImmutableComponentSnapshotPlugin<S>
 where
     S: Send + Sync + 'static + Strategy,
     S::Target: Component<Mutability = Immutable>,
-    S::Stored: Send + Sync + 'static,
+    S::Stored: Send + Sync + Clone + 'static,
 {
     /// Registers snapshot storage and the save/load systems for this immutable component type.
     fn build(&self, app: &mut App) {
@@ -198,7 +271,7 @@ where
                 (
                     GgrsComponentSnapshots::<S::Target, S::Stored>::sync_depth,
                     GgrsComponentSnapshots::<S::Target, S::Stored>::discard_old_snapshots,
-                    ComponentSnapshotPlugin::<S>::save,
+                    ComponentSnapshotPlugin::<S>::save_cloneable,
                 )
                     .chain()
                     .in_set(SaveWorldSystems::Snapshot),
@@ -210,7 +283,7 @@ where
 impl<S> ImmutableComponentSnapshotPlugin<S>
 where
     S: Strategy,
-    S::Target: Component<Mutability = Immutable>,
+    S::Target: Component,
     S::Stored: Send + Sync + 'static,
 {
     /// System that restores this immutable component to its snapshotted state for the target frame,
@@ -242,5 +315,39 @@ where
             snapshot.iter().count(),
             disqualified::ShortName::of::<S::Target>()
         );
+    }
+}
+
+/// A separate plugin for immutable components with non-Clone strategies (e.g. ReflectStrategy).
+pub struct ImmutableComponentSnapshotReflectPlugin<S>(PhantomData<S>);
+
+impl<S> Default for ImmutableComponentSnapshotReflectPlugin<S> {
+    fn default() -> Self {
+        Self(default())
+    }
+}
+
+impl<S> Plugin for ImmutableComponentSnapshotReflectPlugin<S>
+where
+    S: Send + Sync + 'static + Strategy,
+    S::Target: Component<Mutability = Immutable>,
+    S::Stored: Send + Sync + 'static,
+{
+    fn build(&self, app: &mut App) {
+        app.init_resource::<GgrsComponentSnapshots<S::Target, S::Stored>>()
+            .add_systems(
+                SaveWorld,
+                (
+                    GgrsComponentSnapshots::<S::Target, S::Stored>::sync_depth,
+                    GgrsComponentSnapshots::<S::Target, S::Stored>::discard_old_snapshots,
+                    ComponentSnapshotPlugin::<S>::save_reflect,
+                )
+                    .chain()
+                    .in_set(SaveWorldSystems::Snapshot),
+            )
+            .add_systems(
+                LoadWorld,
+                ImmutableComponentSnapshotPlugin::<S>::load.in_set(LoadWorldSystems::Data),
+            );
     }
 }

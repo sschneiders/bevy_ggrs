@@ -11,7 +11,8 @@
 //! ```
 
 use crate::snapshot::{
-    CloneStrategy, ComponentChecksumPlugin, ComponentMapEntitiesPlugin, ComponentSnapshotPlugin,
+    CloneStrategy, ComponentChecksumPlugin, ComponentMapEntitiesPlugin,
+    ComponentSnapshotPlugin, ComponentSnapshotReflectPlugin,
     ResourceChecksumPlugin, ResourceSnapshotPlugin,
 };
 use bevy::{
@@ -24,7 +25,8 @@ use bevy::{
 use std::hash::Hash;
 
 use super::{
-    CopyStrategy, ImmutableComponentSnapshotPlugin, ReflectStrategy, ResourceMapEntitiesPlugin,
+    CopyStrategy, ImmutableComponentSnapshotPlugin, ImmutableComponentSnapshotReflectPlugin,
+    ReflectStrategy, ResourceMapEntitiesPlugin,
 };
 
 /// Extension trait to ergonomically add rollback plugins to Bevy Apps
@@ -137,14 +139,14 @@ impl RollbackApp for App {
     where
         Type: Component<Mutability = Mutable> + Reflect + FromWorld,
     {
-        self.add_plugins(ComponentSnapshotPlugin::<ReflectStrategy<Type>>::default())
+        self.add_plugins(ComponentSnapshotReflectPlugin::<ReflectStrategy<Type>>::default())
     }
 
     fn rollback_immutable_component_with_reflect<Type>(&mut self) -> &mut Self
     where
         Type: Component<Mutability = Immutable> + Reflect + FromWorld,
     {
-        self.add_plugins(ImmutableComponentSnapshotPlugin::<ReflectStrategy<Type>>::default())
+        self.add_plugins(ImmutableComponentSnapshotReflectPlugin::<ReflectStrategy<Type>>::default())
     }
 
     fn rollback_resource_with_reflect<Type>(&mut self) -> &mut Self
