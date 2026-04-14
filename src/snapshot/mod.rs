@@ -10,7 +10,7 @@
 //! advanced users can build custom snapshot behaviour.
 
 use crate::{DEFAULT_FPS, MaxPredictionWindow};
-use bevy::{ecs::schedule::ScheduleLabel, platform::collections::HashMap, prelude::*};
+use bevy::{ecs::schedule::ScheduleLabel, prelude::*};
 use seahash::SeaHasher;
 use std::{collections::VecDeque, marker::PhantomData};
 
@@ -274,15 +274,20 @@ impl<For, As> GgrsSnapshots<For, As> {
 }
 
 /// A storage type suitable for per-[`Entity`] snapshots, such as [`Component`] types.
+///
+/// Internally uses a sorted dense `Vec<(RollbackId, As)>` instead of a `HashMap`.
+/// This avoids per-entry hashing overhead and improves cache locality for large entity counts.
+/// `get()` uses binary search (O(log n)); `new()` sorts after collecting (O(n log n)).
 pub struct GgrsComponentSnapshot<For, As = For> {
-    snapshot: HashMap<RollbackId, As>,
+    /// Sorted by `RollbackId` for O(log n) lookups.
+    entries: Vec<(RollbackId, As)>,
     _phantom: PhantomData<For>,
 }
 
 impl<For, As> Default for GgrsComponentSnapshot<For, As> {
     fn default() -> Self {
         Self {
-            snapshot: default(),
+            entries: Vec::new(),
             _phantom: default(),
         }
     }
@@ -290,27 +295,47 @@ impl<For, As> Default for GgrsComponentSnapshot<For, As> {
 
 impl<For, As> GgrsComponentSnapshot<For, As> {
     /// Create a new snapshot from a list of [`Rollback`] flags and stored [`Component`] types.
+    /// The entries are sorted by `RollbackId` for efficient lookup.
     pub fn new(components: impl IntoIterator<Item = (RollbackId, As)>) -> Self {
+        let mut entries: Vec<_> = components.into_iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
         Self {
-            snapshot: components.into_iter().collect(),
-            ..default()
+            entries,
+            _phantom: default(),
         }
     }
 
     /// Insert a single snapshot for the provided [`Rollback`].
+    /// Maintains sorted order via binary-search insertion.
     pub fn insert(&mut self, entity: RollbackId, snapshot: As) -> &mut Self {
-        self.snapshot.insert(entity, snapshot);
+        match self.entries.binary_search_by(|(id, _)| id.cmp(&entity)) {
+            Ok(idx) => self.entries[idx].1 = snapshot,
+            Err(idx) => self.entries.insert(idx, (entity, snapshot)),
+        }
         self
     }
 
-    /// Get a single snapshot for the provided [`Rollback`].
+    /// Get a single snapshot for the provided [`Rollback`] via binary search.
     pub fn get(&self, entity: &RollbackId) -> Option<&As> {
-        self.snapshot.get(entity)
+        self.entries
+            .binary_search_by(|(id, _)| id.cmp(entity))
+            .ok()
+            .map(|idx| &self.entries[idx].1)
     }
 
-    /// Iterate over all stored snapshots.
+    /// Iterate over all stored snapshots in `RollbackId` order.
     pub fn iter(&self) -> impl Iterator<Item = (&RollbackId, &As)> + '_ {
-        self.snapshot.iter()
+        self.entries.iter().map(|(id, val)| (id, val))
+    }
+
+    /// Returns the number of entries in this snapshot.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns `true` if there are no entries.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 }
 

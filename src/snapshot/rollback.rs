@@ -26,7 +26,7 @@ pub struct Rollback;
 
 /// A stable identifier for rollback entities, used as a key in snapshot storage.
 /// Automatically inserted when [`Rollback`] is added to an entity.
-#[derive(Component, Hash, PartialEq, Eq, Clone, Copy, Debug)]
+#[derive(Component, Hash, PartialEq, Eq, Clone, Copy, Debug, PartialOrd, Ord)]
 #[component(immutable)]
 pub struct RollbackId(Entity);
 
