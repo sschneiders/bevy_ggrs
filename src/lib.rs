@@ -257,3 +257,10 @@ impl<C: Config> Plugin for GgrsPlugin<C> {
             .add_plugins((ChecksumPlugin, EntityChecksumPlugin, GgrsTimePlugin));
     }
 }
+
+/// When set to true, the GGRS session stops advancing frames.
+/// Useful for pausing the simulation during join-sync or other operations
+/// where the game state must not change.
+/// Remote clients are still polled to keep connections alive.
+#[derive(Resource, Default)]
+pub struct GgrsPaused(pub bool);

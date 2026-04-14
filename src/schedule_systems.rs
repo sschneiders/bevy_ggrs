@@ -17,6 +17,9 @@ use ggrs::{
 };
 
 pub(crate) fn run_ggrs_schedules<T: Config>(world: &mut World) {
+    // If paused (e.g. during join-sync), skip frame advancement but keep polling.
+    let paused = world.get_resource::<crate::GgrsPaused>().map_or(false, |p| p.0);
+
     let framerate: usize = **world.get_resource_or_insert_with::<RollbackFrameRate>(default);
 
     let mut time_data = world
@@ -52,6 +55,8 @@ pub(crate) fn run_ggrs_schedules<T: Config>(world: &mut World) {
     }
 
     // if we accumulated enough time, do steps
+    // if paused, don't advance frames but keep the connection alive
+    if !paused {
     while time_data.accumulator >= fps_delta {
         // decrease accumulator
         time_data.accumulator = time_data.accumulator.saturating_sub(fps_delta);
@@ -78,6 +83,7 @@ pub(crate) fn run_ggrs_schedules<T: Config>(world: &mut World) {
             }
         }
     }
+    } // end if !paused
 
     world.insert_resource(time_data);
 }
