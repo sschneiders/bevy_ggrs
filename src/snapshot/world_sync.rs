@@ -63,6 +63,9 @@ type CaptureResourceFn = fn(&mut World, &mut Vec<u8>);
 /// Type-erased function pointer for restoring a resource into the world.
 type RestoreResourceFn = fn(&mut World, &[u8]);
 
+/// Type-erased function pointer for remapping entity references inside a component.
+type RemapEntitiesFn = fn(&mut World, &std::collections::HashMap<Entity, Entity>);
+
 /// Registry of component and resource types that participate in world sync snapshots.
 ///
 /// This is automatically populated when you use
@@ -74,6 +77,8 @@ pub struct WorldSyncRegistry {
     restore_fns: Vec<RestoreFn>,
     capture_resource_fns: Vec<CaptureResourceFn>,
     restore_resource_fns: Vec<RestoreResourceFn>,
+    /// Function pointers that remap Entity fields inside components after restore.
+    remap_fns: Vec<RemapEntitiesFn>,
 }
 
 impl WorldSyncRegistry {
@@ -91,6 +96,20 @@ impl WorldSyncRegistry {
     ) {
         self.capture_resource_fns.push(capture_resource::<R>);
         self.restore_resource_fns.push(restore_resource::<R>);
+    }
+
+    /// Register a component type that contains `Entity` fields needing remapping after restore.
+    /// The component must implement [`bevy::ecs::entity::MapEntities`].
+    pub fn register_component_with_remap<
+        C: Component<Mutability = bevy::ecs::component::Mutable>
+            + Clone
+            + serde::Serialize
+            + serde::de::DeserializeOwned
+            + bevy::ecs::entity::MapEntities,
+    >(&mut self) {
+        self.capture_fns.push(capture_component::<C>);
+        self.restore_fns.push(restore_component::<C>);
+        self.remap_fns.push(remap_component_entities::<C>);
     }
 }
 
@@ -213,6 +232,27 @@ fn restore_resource<R: Resource + Clone + serde::de::DeserializeOwned>(
     };
 
     world.insert_resource(resource);
+}
+
+fn remap_component_entities<
+    C: Component<Mutability = bevy::ecs::component::Mutable> + bevy::ecs::entity::MapEntities,
+>(
+    world: &mut World,
+    entity_map: &std::collections::HashMap<Entity, Entity>,
+) {
+    struct Mapper<'a>(&'a std::collections::HashMap<Entity, Entity>);
+    impl<'a> bevy::ecs::entity::EntityMapper for Mapper<'a> {
+        fn get_mapped(&mut self, entity: Entity) -> Entity {
+            self.0.get(&entity).copied().unwrap_or(entity)
+        }
+        fn set_mapped(&mut self, _old: Entity, _new: Entity) {
+            // No-op: we only need one-directional mapping
+        }
+    }
+    let mut query = world.query::<(Entity, &mut C)>();
+    for (_entity, mut component) in query.iter_mut(world) {
+        component.map_entities(&mut Mapper(entity_map));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -343,15 +383,19 @@ impl WorldSyncSnapshot {
         // Step 2: Restore RollbackOrdered (must happen before on_add hooks fire)
         restore_ordered(world, &self.ordered_data);
 
-        // Step 3: Spawn entities with exact RollbackIds
-        restore_entities(world, &self.entity_data);
+        // Step 3: Spawn entities with exact RollbackIds, build old→new entity map
+        let entity_map = restore_entities(world, &self.entity_data);
 
         // Step 4: Restore component data
-        let (restore_fns, restore_resource_fns) = {
+        let (restore_fns, restore_resource_fns, remap_fns) = {
             let registry = world.get_resource::<WorldSyncRegistry>();
             match registry {
-                Some(reg) => (reg.restore_fns.clone(), reg.restore_resource_fns.clone()),
-                None => (Vec::new(), Vec::new()),
+                Some(reg) => (
+                    reg.restore_fns.clone(),
+                    reg.restore_resource_fns.clone(),
+                    reg.remap_fns.clone(),
+                ),
+                None => (Vec::new(), Vec::new(), Vec::new()),
             }
         };
 
@@ -359,12 +403,17 @@ impl WorldSyncSnapshot {
             restore_fn(world, data);
         }
 
-        // Step 5: Restore resource data
+        // Step 5: Remap Entity fields inside components (owner references, etc.)
+        for remap_fn in &remap_fns {
+            remap_fn(world, &entity_map);
+        }
+
+        // Step 6: Restore resource data
         for (restore_fn, data) in restore_resource_fns.iter().zip(&self.resource_sections) {
             restore_fn(world, data);
         }
 
-        // Step 6: Set frame count
+        // Step 7: Set frame count
         world.insert_resource(RollbackFrameCount(self.frame));
     }
 
@@ -527,11 +576,12 @@ fn restore_ordered(world: &mut World, data: &[u8]) {
     world.insert_resource(RollbackOrdered::from_sorted_ids(ids));
 }
 
-fn restore_entities(world: &mut World, data: &[u8]) {
+fn restore_entities(world: &mut World, data: &[u8]) -> std::collections::HashMap<Entity, Entity> {
+    let mut entity_map = std::collections::HashMap::new();
     let mut cursor = Cursor::new(data);
     let mut buf4 = [0u8; 4];
     if cursor.read_exact(&mut buf4).is_err() {
-        return;
+        return entity_map;
     }
     let count = u32::from_le_bytes(buf4) as usize;
 
@@ -544,16 +594,17 @@ fn restore_entities(world: &mut World, data: &[u8]) {
         }
         let rid = RollbackId::from_bits(u64::from_le_bytes(buf8));
 
-        // Skip original entity bits (client gets new entity IDs)
+        // Read original entity bits
         if cursor.read_exact(&mut buf8).is_err() {
             break;
         }
+        let old_entity = Entity::from_bits(u64::from_le_bytes(buf8));
 
         // Spawn with Rollback + RollbackId.
-        // The on_add hook for Rollback sees that RollbackId is already present
-        // and skips creating a new one or pushing to RollbackOrdered.
-        world.spawn((Rollback, rid));
+        let new_entity = world.spawn((Rollback, rid)).id();
+        entity_map.insert(old_entity, new_entity);
     }
+    entity_map
 }
 
 fn despawn_all_rollback(world: &mut World) {

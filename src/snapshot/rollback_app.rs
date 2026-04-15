@@ -145,6 +145,12 @@ pub trait RollbackApp {
     fn world_sync_resource<Type>(&mut self) -> &mut Self
     where
         Type: Resource + Clone + serde::Serialize + serde::de::DeserializeOwned;
+
+    /// Registers a component type for world sync with entity remapping.
+    /// After restore, `MapEntities` is called on all instances using the old→new entity map.
+    fn world_sync_component_with_remap<Type>(&mut self) -> &mut Self
+    where
+        Type: Component<Mutability = Mutable> + Clone + serde::Serialize + serde::de::DeserializeOwned + bevy::ecs::entity::MapEntities;
 }
 
 impl RollbackApp for App {
@@ -280,4 +286,15 @@ impl RollbackApp for App {
             .register_resource::<Type>();
         self
     }
+
+    fn world_sync_component_with_remap<Type>(&mut self) -> &mut Self
+    where
+        Type: Component<Mutability = Mutable> + Clone + serde::Serialize + serde::de::DeserializeOwned + bevy::ecs::entity::MapEntities,
+    {
+        self.world_mut()
+            .get_resource_or_insert_with(super::WorldSyncRegistry::default)
+            .register_component_with_remap::<Type>();
+        self
+    }
 }
+
