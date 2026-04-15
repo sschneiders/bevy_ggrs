@@ -35,6 +35,25 @@ impl RollbackId {
     pub(crate) fn new(entity: Entity) -> Self {
         Self(entity)
     }
+
+    /// Returns the underlying [`Entity`] for this rollback ID.
+    pub fn entity(&self) -> Entity {
+        self.0
+    }
+
+    /// Returns the raw bits of the underlying entity.
+    /// Suitable for serialization — use [`Self::from_bits`] to reconstruct.
+    pub fn to_bits(self) -> u64 {
+        self.0.to_bits()
+    }
+
+    /// Reconstructs a [`RollbackId`] from raw bits produced by [`Self::to_bits`].
+    ///
+    /// # Safety
+    /// The bits must have been produced by [`Self::to_bits`] on the same platform.
+    pub fn from_bits(bits: u64) -> Self {
+        Self(Entity::from_bits(bits))
+    }
 }
 
 fn on_rollback_added(mut world: DeferredWorld, ctx: HookContext) {
@@ -67,6 +86,19 @@ impl RollbackOrdered {
         self.order.insert(rollback, self.sorted.len() as u64 - 1);
 
         self
+    }
+
+    /// Construct a [`RollbackOrdered`] from a pre-sorted list of [`RollbackId`]s.
+    /// The insertion order of the iterator determines the ordering indices.
+    ///
+    /// This is used during world snapshot restoration to recreate the host's
+    /// deterministic entity ordering on the client.
+    pub fn from_sorted_ids(ids: impl IntoIterator<Item = RollbackId>) -> Self {
+        let mut ro = Self::default();
+        for id in ids {
+            ro.push(id);
+        }
+        ro
     }
 
     /// Iterate over all [`RollbackId`] markers ever registered, even if they have since been deleted.

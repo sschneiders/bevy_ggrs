@@ -132,6 +132,19 @@ pub trait RollbackApp {
     fn require_rollback<Type>(&mut self) -> &mut Self
     where
         Type: Component;
+
+    /// Registers a component type for world sync snapshots (late-join / session migration).
+    /// Requires `Serialize + DeserializeOwned` for portable serialization.
+    /// This is separate from rollback snapshots — a component can be in one, both, or neither.
+    fn world_sync_component<Type>(&mut self) -> &mut Self
+    where
+        Type: Component + Clone + serde::Serialize + serde::de::DeserializeOwned;
+
+    /// Registers a resource type for world sync snapshots (late-join / session migration).
+    /// Requires `Serialize + DeserializeOwned` for portable serialization.
+    fn world_sync_resource<Type>(&mut self) -> &mut Self
+    where
+        Type: Resource + Clone + serde::Serialize + serde::de::DeserializeOwned;
 }
 
 impl RollbackApp for App {
@@ -245,6 +258,26 @@ impl RollbackApp for App {
         Type: Component,
     {
         self.register_required_components::<Type, super::Rollback>();
+        self
+    }
+
+    fn world_sync_component<Type>(&mut self) -> &mut Self
+    where
+        Type: Component + Clone + serde::Serialize + serde::de::DeserializeOwned,
+    {
+        self.world_mut()
+            .get_resource_or_insert_with(super::WorldSyncRegistry::default)
+            .register_component::<Type>();
+        self
+    }
+
+    fn world_sync_resource<Type>(&mut self) -> &mut Self
+    where
+        Type: Resource + Clone + serde::Serialize + serde::de::DeserializeOwned,
+    {
+        self.world_mut()
+            .get_resource_or_insert_with(super::WorldSyncRegistry::default)
+            .register_resource::<Type>();
         self
     }
 }

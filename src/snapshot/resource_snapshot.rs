@@ -5,7 +5,7 @@
 //! are snapshotted as `None` and removed on restore.
 
 use crate::{
-    GgrsResourceSnapshots, LoadWorld, LoadWorldSystems, RollbackFrameCount, SaveWorld,
+    GgrsLockstep, GgrsResourceSnapshots, LoadWorld, LoadWorldSystems, RollbackFrameCount, SaveWorld,
     SaveWorldSystems, Strategy,
 };
 use bevy::prelude::*;
@@ -66,7 +66,11 @@ where
         mut snapshots: ResMut<GgrsResourceSnapshots<S::Target, S::Stored>>,
         frame: Res<RollbackFrameCount>,
         resource: Option<Res<S::Target>>,
+        lockstep: Res<GgrsLockstep>,
     ) {
+        if lockstep.0 {
+            return;
+        }
         snapshots.push(frame.0, resource.map(|res| S::store(res.as_ref())));
 
         trace!("Snapshot {}", disqualified::ShortName::of::<S::Target>());

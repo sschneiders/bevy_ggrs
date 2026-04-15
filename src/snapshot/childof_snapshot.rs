@@ -5,7 +5,7 @@
 //! [`RollbackEntityMap`] after the entity graph is reconstructed.
 
 use crate::{
-    GgrsComponentSnapshots, LoadWorld, LoadWorldSystems, RollbackFrameCount, SaveWorld,
+    GgrsComponentSnapshots, GgrsLockstep, LoadWorld, LoadWorldSystems, RollbackFrameCount, SaveWorld,
     SaveWorldSystems,
 };
 use bevy::{ecs::hierarchy::ChildOf, prelude::*};
@@ -47,7 +47,11 @@ impl ChildOfSnapshotPlugin {
         mut snapshots: ResMut<GgrsComponentSnapshots<ChildOf, ChildOf>>,
         frame: Res<RollbackFrameCount>,
         query: Query<(&RollbackId, &ChildOf)>,
+        lockstep: Res<GgrsLockstep>,
     ) {
+        if lockstep.0 {
+            return;
+        }
         let components = query
             .iter()
             .map(|(&rollback, component)| (rollback, component.clone()));

@@ -6,7 +6,7 @@
 //! marked `#[component(immutable)]`, which must be re-inserted rather than mutated in place.
 
 use crate::{
-    GgrsComponentSnapshot, GgrsComponentSnapshots, LoadWorld, LoadWorldSystems, RollbackFrameCount,
+    GgrsComponentSnapshot, GgrsComponentSnapshots, GgrsLockstep, LoadWorld, LoadWorldSystems, RollbackFrameCount,
     RollbackId, SaveWorld, SaveWorldSystems, Strategy,
 };
 use bevy::{
@@ -73,9 +73,13 @@ where
         frame: Res<RollbackFrameCount>,
         changed_query: Query<(&RollbackId, &S::Target), (With<RollbackId>, Changed<S::Target>)>,
         full_query: Query<(&RollbackId, &S::Target)>,
+        lockstep: Res<GgrsLockstep>,
     ) where
         S::Stored: Clone,
     {
+        if lockstep.0 {
+            return;
+        }
         let frame_val = frame.0;
 
         // Try incremental path when we have a previous snapshot
@@ -125,7 +129,11 @@ where
         mut snapshots: ResMut<GgrsComponentSnapshots<S::Target, S::Stored>>,
         frame: Res<RollbackFrameCount>,
         query: Query<(&RollbackId, &S::Target)>,
+        lockstep: Res<GgrsLockstep>,
     ) {
+        if lockstep.0 {
+            return;
+        }
         let components = query
             .iter()
             .map(|(&rollback, component)| (rollback, S::store(component)));

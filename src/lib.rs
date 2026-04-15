@@ -29,8 +29,9 @@ pub(crate) mod time;
 /// Convenient re-exports of the most commonly used types. Glob-import this to get started.
 pub mod prelude {
     pub use crate::{
-        GgrsConfig, GgrsPaused, GgrsPlugin, GgrsSchedule, GgrsTime, PlayerInputs, ReadInputs, Rollback,
+        GgrsConfig, GgrsLockstep, GgrsPaused, GgrsPlugin, GgrsSchedule, GgrsTime, PlayerInputs, ReadInputs, Rollback,
         RollbackApp, RollbackFrameRate, RollbackId, Session, SyncTestMismatch,
+        WorldSyncSnapshot, WorldSyncRegistry,
         snapshot::prelude::*,
     };
     pub use ggrs::{GgrsEvent, PlayerType, SessionBuilder};
@@ -232,6 +233,7 @@ impl<C: Config> Plugin for GgrsPlugin<C> {
             .init_resource::<LocalPlayers>()
             .init_resource::<FixedTimestepData>()
             .init_resource::<crate::GgrsPaused>()
+            .init_resource::<crate::GgrsLockstep>()
             .init_schedule(ReadInputs)
             .edit_schedule(AdvanceWorld, |schedule| {
                 // AdvanceWorld is mostly a facilitator for GgrsSchedule, so SingleThreaded avoids overhead
@@ -265,3 +267,9 @@ impl<C: Config> Plugin for GgrsPlugin<C> {
 /// Remote clients are still polled to keep connections alive.
 #[derive(Resource, Default)]
 pub struct GgrsPaused(pub bool);
+
+/// When set to true, component and resource snapshot saving is skipped.
+/// Checksums still run for desync detection. This is appropriate for
+/// lockstep mode (max_prediction_window == 0) where snapshots are never loaded.
+#[derive(Resource, Default)]
+pub struct GgrsLockstep(pub bool);

@@ -24,6 +24,7 @@ ggrs = { version = "0.12.0", features = ["sync-send"] }
 seahash = "4.1"
 disqualified = "1.0.0"
 serde = { version = "1", default-features = false }
+bincode = { version = "1", default-features = false }
 
 [dev-dependencies]
 bevy = { version = "0.18", default-features = true }

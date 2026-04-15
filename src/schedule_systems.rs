@@ -221,6 +221,10 @@ pub(crate) fn handle_requests<T: Config>(requests: Vec<GgrsRequest<T>>, world: &
             world.insert_resource(MaxPredictionWindow(max_prediction));
         }
 
+        // Auto-detect lockstep mode from prediction window
+        let is_lockstep = max_prediction == Some(0);
+        world.insert_resource(crate::GgrsLockstep(is_lockstep));
+
         if let Some(confirmed_frame) = confirmed_frame {
             world.insert_resource(ConfirmedFrameCount(confirmed_frame));
         }

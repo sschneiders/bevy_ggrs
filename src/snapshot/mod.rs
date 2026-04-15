@@ -30,6 +30,7 @@ mod rollback_app;
 mod rollback_entity_map;
 mod set;
 mod strategy;
+mod world_sync;
 
 pub use checksum::*;
 pub use childof_snapshot::*;
@@ -47,6 +48,7 @@ pub use rollback_app::*;
 pub use rollback_entity_map::*;
 pub use set::*;
 pub use strategy::*;
+pub use world_sync::*;
 
 pub mod prelude {
     pub use super::despawn::{RollbackDespawnCommandExtension, RollbackDespawned};
@@ -411,6 +413,7 @@ impl Plugin for SnapshotPlugin {
             .init_resource::<RollbackOrdered>()
             .init_resource::<RollbackFrameCount>()
             .init_resource::<ConfirmedFrameCount>()
+            .init_resource::<crate::GgrsLockstep>()
             .init_schedule(LoadWorld)
             .init_schedule(SaveWorld)
             .init_schedule(AdvanceWorld)

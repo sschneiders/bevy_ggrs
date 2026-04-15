@@ -6,7 +6,7 @@
 //! [`RollbackEntityMap`] so that subsequent plugins can fix up stale entity references.
 
 use crate::{
-    GgrsComponentSnapshot, GgrsComponentSnapshots, LoadWorld, LoadWorldSystems, Rollback,
+    GgrsComponentSnapshot, GgrsComponentSnapshots, GgrsLockstep, LoadWorld, LoadWorldSystems, Rollback,
     RollbackEntityMap, RollbackFrameCount, RollbackId, SaveWorld, SaveWorldSystems,
 };
 use bevy::{ecs::entity::EntityHashMap, platform::collections::HashMap, prelude::*};
@@ -40,7 +40,11 @@ impl EntitySnapshotPlugin {
         mut snapshots: ResMut<GgrsComponentSnapshots<Entity>>,
         frame: Res<RollbackFrameCount>,
         query: Query<(&RollbackId, Entity)>,
+        lockstep: Res<GgrsLockstep>,
     ) {
+        if lockstep.0 {
+            return;
+        }
         let entities = query.iter().map(|(&rollback, entity)| (rollback, entity));
 
         let snapshot = GgrsComponentSnapshot::new(entities);
