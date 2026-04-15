@@ -567,6 +567,87 @@ fn despawn_all_rollback(world: &mut World) {
 }
 
 // ---------------------------------------------------------------------------
+// Session Migration
+// ---------------------------------------------------------------------------
+
+use crate::GgrsPaused;
+
+/// Manages a GGRS session migration (pause → snapshot → destroy → create → restore → resume).
+///
+/// This is a two-phase process coordinated by the game:
+///
+/// 1. **Host calls [`GgrsMigration::prepare(world)`](GgrsMigration::prepare)** —
+///    pauses the GGRS session and captures a full snapshot.
+/// 2. **Game code destroys the old `Session<T>` and creates a new one**
+///    with the updated player list (e.g., adding the joining player).
+/// 3. **Host calls [`GgrsMigration::finish(world, snapshot)`](GgrsMigration::finish)** —
+///    restores the snapshot into the world and resumes the session.
+///
+/// For late-join, the snapshot bytes are sent to the client between steps 1 and 3.
+/// The client restores independently using [`WorldSyncSnapshot::restore`].
+///
+/// # Example
+/// ```rust,ignore
+/// // On host, when a new player joins:
+/// let migration = GgrsMigration::prepare(world);
+/// let snapshot_bytes = migration.snapshot().to_bytes();
+///
+/// // Send snapshot_bytes to client via reliable channel...
+///
+/// // Destroy old session, create new one with updated player list
+/// world.remove_resource::<Session<GgrsConfig<Input>>>();
+/// world.insert_resource(new_session);
+///
+/// // Finish migration on host
+/// GgrsMigration::finish(world, migration.into_snapshot());
+/// ```
+pub struct GgrsMigration {
+    snapshot: WorldSyncSnapshot,
+}
+
+impl GgrsMigration {
+    /// Prepares for session migration: pauses the GGRS session and captures a snapshot.
+    ///
+    /// After calling this, the game should:
+    /// 1. Send the snapshot bytes to any joining clients
+    /// 2. Destroy the old session
+    /// 3. Create a new session with the updated player list
+    /// 4. Call [`Self::finish`] to restore state and resume
+    pub fn prepare(world: &mut World) -> Self {
+        // Pause the session so GGRS stops advancing frames
+        if let Some(mut paused) = world.get_resource_mut::<GgrsPaused>() {
+            paused.0 = true;
+        }
+
+        let snapshot = WorldSyncSnapshot::capture(world);
+        GgrsMigration { snapshot }
+    }
+
+    /// Returns a reference to the captured snapshot.
+    pub fn snapshot(&self) -> &WorldSyncSnapshot {
+        &self.snapshot
+    }
+
+    /// Consumes the migration and returns the snapshot.
+    pub fn into_snapshot(self) -> WorldSyncSnapshot {
+        self.snapshot
+    }
+
+    /// Finishes session migration: restores the snapshot and resumes the GGRS session.
+    ///
+    /// Call this after creating the new session with the updated player list.
+    pub fn finish(world: &mut World, snapshot: WorldSyncSnapshot) {
+        // Restore the snapshot (entities, components, resources, frame count)
+        snapshot.restore(world);
+
+        // Resume the session
+        if let Some(mut paused) = world.get_resource_mut::<GgrsPaused>() {
+            paused.0 = false;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
 
@@ -1059,5 +1140,84 @@ mod tests {
         assert_eq!(health_only, 1);
         assert_eq!(pos_only, 1);
         assert_eq!(both, 1);
+    }
+
+    // --- GgrsMigration tests ---
+
+    #[test]
+    fn migration_prepare_pauses_session() {
+        let mut app = test_app();
+        app.world_mut().insert_resource(GgrsPaused(false));
+
+        let _migration = GgrsMigration::prepare(app.world_mut());
+
+        assert!(app.world().get_resource::<GgrsPaused>().unwrap().0);
+    }
+
+    #[test]
+    fn migration_finish_resumes_session() {
+        let mut app = test_app();
+        app.world_mut().insert_resource(GgrsPaused(false));
+
+        let migration = GgrsMigration::prepare(app.world_mut());
+        let snapshot = migration.into_snapshot();
+
+        GgrsMigration::finish(app.world_mut(), snapshot);
+
+        assert!(!app.world().get_resource::<GgrsPaused>().unwrap().0);
+    }
+
+    #[test]
+    fn migration_preserves_entities_through_roundtrip() {
+        let mut app = test_app_with_components();
+        app.world_mut().insert_resource(GgrsPaused(false));
+        app.world_mut().insert_resource(Score(100));
+        app.world_mut().spawn((Rollback, Health(75.0), Position { x: 3.0, y: 7.0 }));
+        app.world_mut().spawn((Rollback, Health(50.0), Position { x: -1.0, y: 2.0 }));
+        app.update();
+
+        // Prepare migration
+        let migration = GgrsMigration::prepare(app.world_mut());
+        assert!(app.world().get_resource::<GgrsPaused>().unwrap().0);
+
+        // Snapshot should have captured everything
+        let snapshot = migration.into_snapshot();
+        assert_eq!(snapshot.entity_count(), 2);
+        assert_eq!(snapshot.frame, 0);
+
+        // Finish migration
+        GgrsMigration::finish(app.world_mut(), snapshot);
+        assert!(!app.world().get_resource::<GgrsPaused>().unwrap().0);
+
+        // Entities should still be there
+        let mut query = app.world_mut().query::<(&Health, &Position)>();
+        let results: Vec<_> = query.iter(app.world()).collect();
+        assert_eq!(results.len(), 2);
+
+        // Score should be restored
+        assert_eq!(app.world().get_resource::<Score>().unwrap().0, 100);
+    }
+
+    #[test]
+    fn migration_snapshot_serializable_for_network() {
+        let mut app = test_app_with_components();
+        app.world_mut().insert_resource(GgrsPaused(false));
+        app.world_mut().spawn((Rollback, Health(99.0)));
+        app.update();
+
+        let migration = GgrsMigration::prepare(app.world_mut());
+        let bytes = migration.snapshot().to_bytes();
+        assert!(!bytes.is_empty());
+
+        // Restore on "client" side
+        let restored = WorldSyncSnapshot::from_bytes(&bytes).unwrap();
+        assert_eq!(restored.entity_count(), 1);
+
+        let mut target = test_app_with_components();
+        GgrsMigration::finish(target.world_mut(), restored);
+
+        let mut query = target.world_mut().query::<&Health>();
+        let health = query.single(target.world_mut()).unwrap();
+        assert_eq!(health.0, 99.0);
     }
 }

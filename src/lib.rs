@@ -29,7 +29,7 @@ pub(crate) mod time;
 /// Convenient re-exports of the most commonly used types. Glob-import this to get started.
 pub mod prelude {
     pub use crate::{
-        GgrsConfig, GgrsLockstep, GgrsPaused, GgrsPlugin, GgrsSchedule, GgrsTime, PlayerInputs, ReadInputs, Rollback,
+        GgrsConfig, GgrsLockstep, GgrsMigration, GgrsPaused, GgrsPlugin, GgrsSchedule, GgrsTime, PlayerInputs, ReadInputs, Rollback,
         RollbackApp, RollbackFrameRate, RollbackId, Session, SyncTestMismatch,
         WorldSyncSnapshot, WorldSyncRegistry,
         snapshot::prelude::*,
