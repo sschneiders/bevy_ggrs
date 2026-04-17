@@ -107,6 +107,21 @@ impl<A> Default for ConnectedPeers<A> {
 #[derive(Resource, Default)]
 pub struct IsHost(pub bool);
 
+/// The peer that triggered the current sync.
+/// Set by bevy_ggrs before [`SyncSerialize`] runs, cleared after sync completes.
+/// Game systems can read this to know which peer is joining.
+#[derive(Resource)]
+pub struct NewSyncPeer<A>(pub Option<A>);
+
+impl<A> Default for NewSyncPeer<A> {
+    fn default() -> Self { Self(None) }
+}
+
+/// Whether a mid-session sync is currently in progress.
+/// Games should check this before allowing manual unpause.
+#[derive(Resource, Default)]
+pub struct SyncActive(pub bool);
+
 // ── Internal State ─────────────────────────────────────────────────────────
 
 #[derive(Resource)]
@@ -128,6 +143,24 @@ impl<A: Eq + Hash + Clone> Default for GgrsSyncState<A> {
             new_peer: None,
             host_addr: None,
         }
+    }
+}
+
+/// Set the peers that are already in the current GGRS session.
+/// Call this after creating or rebuilding a session that includes remote players.
+/// This tells the sync module which peers to consider "known" so it can detect
+/// new joiners correctly.
+pub fn set_session_peers<T: Config>(world: &mut World, peers: impl Iterator<Item = T::Address>)
+where
+    T::Address: Clone + Eq + Hash + Send + Sync,
+{
+    world.get_resource_or_insert_with(GgrsSyncState::<T::Address>::default);
+    let state = world.resource_mut::<GgrsSyncState<T::Address>>();
+    // SAFETY: we're just setting a field, no aliasing concerns
+    // Actually, just use get_resource_mut directly
+    drop(state);
+    if let Some(mut state) = world.get_resource_mut::<GgrsSyncState<T::Address>>() {
+        state.session_peers = peers.collect();
     }
 }
 
@@ -161,6 +194,8 @@ where
     world.get_resource_or_insert_with(SyncInbox::<T::Address>::default);
     world.get_resource_or_insert_with(SyncOutbox::<T::Address>::default);
     world.get_resource_or_insert_with(ConnectedPeers::<T::Address>::default);
+    world.get_resource_or_insert_with(NewSyncPeer::<T::Address>::default);
+    world.get_resource_or_insert_with(SyncActive::default);
 
     let phase = world.resource::<GgrsSyncState<T::Address>>().phase.clone();
 
@@ -195,21 +230,6 @@ where
             .session_peers
             .clone();
 
-        // First session with existing peers: populate session_peers
-        // (handles the case where the host creates a session after clients connect)
-        let session_peers = if session_peers.is_empty() && !connected.is_empty() {
-            // If we already have a session with players, assume all connected
-            // peers are session peers (e.g., after initial P2P session creation).
-            // New peer detection will work correctly from here.
-            let initial: HashSet<_> = connected.iter().cloned().collect();
-            world
-                .resource_mut::<GgrsSyncState<T::Address>>()
-                .session_peers = initial.clone();
-            initial
-        } else {
-            session_peers
-        };
-
         let new_peer = connected
             .iter()
             .find(|p| !session_peers.contains(p))
@@ -218,9 +238,10 @@ where
         if let Some(new_peer) = new_peer {
             info!("[SYNC] New peer detected, starting sync");
 
-            // 1. Pause
+            // 1. Pause + mark active
             *world.resource_mut::<GgrsPaused>() = GgrsPaused(true);
             reset_timestep_accumulator(world);
+            world.insert_resource(SyncActive(true));
 
             // 2. Notify existing clients
             for peer in &session_peers {
@@ -230,11 +251,14 @@ where
                     .push((peer.clone(), vec![TAG_PAUSE]));
             }
 
-            // 3. Serialize world
+            // 3. Set new peer info for game's SyncSerialize systems
+            world.insert_resource(NewSyncPeer(Some(new_peer.clone())));
+
+            // 4. Serialize world (game's SyncSerialize schedule)
             run_schedule_extract(world, SyncSerialize);
             let snapshot = world.resource::<WorldSnapshot>().0.clone();
 
-            // 4. Send snapshot to new peer
+            // 5. Send snapshot to new peer
             let mut data = vec![TAG_SYNC_DATA];
             data.extend_from_slice(&snapshot);
             world
@@ -242,7 +266,7 @@ where
                 .0
                 .push((new_peer.clone(), data));
 
-            // 5. Update state
+            // 6. Update state
             {
                 let mut state = world.resource_mut::<GgrsSyncState<T::Address>>();
                 state.phase = Phase::HostWaitingReady;
@@ -263,6 +287,7 @@ where
                     info!("[SYNC] Received pause from host");
                     *world.resource_mut::<GgrsPaused>() = GgrsPaused(true);
                     reset_timestep_accumulator(world);
+                    world.insert_resource(SyncActive(true));
                     let mut state = world.resource_mut::<GgrsSyncState<T::Address>>();
                     state.phase = Phase::ExistingWaitingResume;
                     state.host_addr = Some(peer.clone());
@@ -288,6 +313,7 @@ where
                 info!("[SYNC] Received snapshot from host");
                 *world.resource_mut::<WorldSnapshot>() = WorldSnapshot(msg[1..].to_vec());
                 *world.resource_mut::<GgrsPaused>() = GgrsPaused(true);
+                world.insert_resource(SyncActive(true));
                 let mut state = world.resource_mut::<GgrsSyncState<T::Address>>();
                 state.host_addr = Some(peer.clone());
                 state.phase = Phase::ClientDeserializing;
@@ -347,10 +373,12 @@ where
                     state.phase = Phase::Idle;
                     state.new_peer = None;
 
-                    // Unpause self
+                    // Unpause self + clear sync markers
                     *world.resource_mut::<RollbackFrameCount>() = RollbackFrameCount(0);
                     reset_timestep_accumulator(world);
                     *world.resource_mut::<GgrsPaused>() = GgrsPaused(false);
+                    world.insert_resource(NewSyncPeer::<T::Address>(None));
+                    world.insert_resource(SyncActive(false));
 
                     info!("[SYNC] Session rebuilt, all resumed");
                     return;
@@ -447,6 +475,8 @@ where
     let mut state = world.resource_mut::<GgrsSyncState<T::Address>>();
     state.session_peers = connected.into_iter().collect();
     state.phase = Phase::Idle;
+    world.insert_resource(NewSyncPeer::<T::Address>(None));
+    world.insert_resource(SyncActive(false));
 
     info!("[SYNC] Session rebuilt, resumed");
 }

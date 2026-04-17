@@ -43,9 +43,10 @@ pub mod prelude {
         GgrsConfig, GgrsLockstep, GgrsMigration, GgrsPaused, GgrsPlugin, GgrsSchedule, GgrsTime, PlayerInputs, ReadInputs, Rollback,
         RollbackApp, RollbackFrameRate, RollbackId, Session, SyncTestMismatch,
         WorldSyncSnapshot, WorldSyncRegistry,
-        ConnectedPeers, IsHost, RebuildSession, SessionConfigData, SyncDeserialize,
-        SyncInbox, SyncOutbox, SyncSerialize, TAG_PAUSE, TAG_READY, TAG_RESUME, TAG_SYNC_DATA,
-        WorldSnapshot,
+        ConnectedPeers, IsHost, NewSyncPeer, RebuildSession, SessionConfigData, SyncActive,
+        SyncDeserialize, SyncInbox, SyncOutbox, SyncSerialize,
+        TAG_PAUSE, TAG_READY, TAG_RESUME, TAG_SYNC_DATA, WorldSnapshot,
+        set_session_peers,
         snapshot::prelude::*,
     };
     pub use ggrs::{GgrsEvent, PlayerType, SessionBuilder};
