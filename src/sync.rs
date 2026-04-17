@@ -237,7 +237,7 @@ where
 
         if let Some(new_peer) = new_peer {
             info!("[SYNC] New peer detected, starting sync");
-            eprintln!("[SYNC] New peer detected, starting sync");
+            log::debug!("[SYNC] New peer detected, starting sync");
 
             // 1. Pause + mark active
             *world.resource_mut::<GgrsPaused>() = GgrsPaused(true);
@@ -285,7 +285,7 @@ where
             match msg[0] {
                 TAG_SYNC_DATA => {
                     info!("[SYNC] Received snapshot from host (existing client)");
-                    eprintln!("[SYNC] Received snapshot from host (existing client)");
+                    log::debug!("[SYNC] Received snapshot from host (existing client)");
                     *world.resource_mut::<WorldSnapshot>() = WorldSnapshot(msg[1..].to_vec());
                     *world.resource_mut::<GgrsPaused>() = GgrsPaused(true);
                     reset_timestep_accumulator(world);
@@ -313,7 +313,7 @@ where
             }
             if msg[0] == TAG_SYNC_DATA {
                 info!("[SYNC] Received snapshot from host");
-                eprintln!("[SYNC] Received snapshot from host");
+                log::debug!("[SYNC] Received snapshot from host");
                 *world.resource_mut::<WorldSnapshot>() = WorldSnapshot(msg[1..].to_vec());
                 *world.resource_mut::<GgrsPaused>() = GgrsPaused(true);
                 world.insert_resource(SyncActive(true));
@@ -333,10 +333,10 @@ where
     let inbox: Vec<(T::Address, Vec<u8>)> = world.resource::<SyncInbox<T::Address>>().0.clone();
     world.resource_mut::<SyncInbox<T::Address>>().0.clear();
     let new_peer = world.resource::<GgrsSyncState<T::Address>>().new_peer.clone();
-    eprintln!("[HOST-WAITING] inbox={} msgs, new_peer={:?}", inbox.len(), new_peer);
+    log::debug!("[HOST-WAITING] inbox={} msgs, new_peer={:?}", inbox.len(), new_peer);
     for (peer, msg) in &inbox {
         if !msg.is_empty() {
-            eprintln!("  msg from {:?}: tag={:#x}", peer, msg[0]);
+            log::debug!("  msg from {:?}: tag={:#x}", peer, msg[0]);
         }
     }
 
