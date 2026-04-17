@@ -244,30 +244,29 @@ where
             reset_timestep_accumulator(world);
             world.insert_resource(SyncActive(true));
 
-            // 2. Notify existing clients
+            // 2. Set new peer info for game's SyncSerialize systems
+            world.insert_resource(NewSyncPeer(Some(new_peer.clone())));
+
+            // 3. Serialize world (game's SyncSerialize schedule)
+            run_schedule_extract(world, SyncSerialize);
+            let snapshot = world.resource::<WorldSnapshot>().0.clone();
+
+            // 4. Send snapshot to ALL peers (existing + new)
+            // Existing clients need the new player entity too.
+            let mut data = vec![TAG_SYNC_DATA];
+            data.extend_from_slice(&snapshot);
             for peer in &session_peers {
                 world
                     .resource_mut::<SyncOutbox<T::Address>>()
                     .0
-                    .push((peer.clone(), vec![TAG_PAUSE]));
+                    .push((peer.clone(), data.clone()));
             }
-
-            // 3. Set new peer info for game's SyncSerialize systems
-            world.insert_resource(NewSyncPeer(Some(new_peer.clone())));
-
-            // 4. Serialize world (game's SyncSerialize schedule)
-            run_schedule_extract(world, SyncSerialize);
-            let snapshot = world.resource::<WorldSnapshot>().0.clone();
-
-            // 5. Send snapshot to new peer
-            let mut data = vec![TAG_SYNC_DATA];
-            data.extend_from_slice(&snapshot);
             world
                 .resource_mut::<SyncOutbox<T::Address>>()
                 .0
                 .push((new_peer.clone(), data));
 
-            // 6. Update state
+            // 5. Update state
             {
                 let mut state = world.resource_mut::<GgrsSyncState<T::Address>>();
                 state.phase = Phase::HostWaitingReady;
@@ -284,15 +283,16 @@ where
                 continue;
             }
             match msg[0] {
-                TAG_PAUSE => {
-                    info!("[SYNC] Received pause from host");
-                    eprintln!("[SYNC] Received pause from host");
+                TAG_SYNC_DATA => {
+                    info!("[SYNC] Received snapshot from host (existing client)");
+                    eprintln!("[SYNC] Received snapshot from host (existing client)");
+                    *world.resource_mut::<WorldSnapshot>() = WorldSnapshot(msg[1..].to_vec());
                     *world.resource_mut::<GgrsPaused>() = GgrsPaused(true);
                     reset_timestep_accumulator(world);
                     world.insert_resource(SyncActive(true));
                     let mut state = world.resource_mut::<GgrsSyncState<T::Address>>();
-                    state.phase = Phase::ExistingWaitingResume;
                     state.host_addr = Some(peer.clone());
+                    state.phase = Phase::ClientDeserializing;
                     return;
                 }
                 TAG_RESUME => {
