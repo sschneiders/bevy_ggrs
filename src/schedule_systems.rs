@@ -57,7 +57,7 @@ pub(crate) fn run_ggrs_schedules<T: Config>(world: &mut World) {
     // When NOT paused: poll every frame (normal operation).
     // When paused with Running session: poll at reduced rate to keep GGRS's internal
     // protocol alive (keepalives, quality reports) without overflowing the 128-slot
-    // input queue. GGRS disconnects peers after 2s of silence by default.
+    // input queue. GGRS disconnects peers after disconnect_timeout ms of silence.
     // When Synchronizing: always poll to complete the initial sync handshake.
     let should_poll = if let Some(session) = world.get_resource::<Session<T>>() {
         match session {
@@ -67,8 +67,8 @@ pub(crate) fn run_ggrs_schedules<T: Config>(world: &mut World) {
                 } else if sess.current_state() != SessionState::Running {
                     true // Always poll during Synchronizing
                 } else {
-                    // Paused + Running: throttle to ~2Hz (every 30 frames at 60fps)
-                    // to keep keepalives flowing without filling the input queue.
+                    // Paused + Running: throttle to ~2Hz to keep keepalives flowing
+                    // without rapidly filling the input queue.
                     time_data.poll_throttle_every_n(30)
                 }
             }

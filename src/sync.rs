@@ -39,6 +39,10 @@ pub const TAG_SYNC_DATA: u8 = 0x11;
 pub const TAG_READY: u8 = 0x12;
 /// Host → all clients: "rebuild session and resume"
 pub const TAG_RESUME: u8 = 0x13;
+/// Host → all clients: "manual pause"
+pub const TAG_MANUAL_PAUSE: u8 = 0x14;
+/// Host → all clients: "manual resume"
+pub const TAG_MANUAL_RESUME: u8 = 0x15;
 
 // ── Schedule Labels ────────────────────────────────────────────────────────
 

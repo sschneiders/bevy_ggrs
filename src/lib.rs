@@ -45,7 +45,7 @@ pub mod prelude {
         WorldSyncSnapshot, WorldSyncRegistry,
         ConnectedPeers, IsHost, NewSyncPeer, RebuildSession, SessionConfigData, SyncActive,
         SyncDeserialize, SyncInbox, SyncOutbox, SyncSerialize,
-        TAG_PAUSE, TAG_READY, TAG_RESUME, TAG_SYNC_DATA, WorldSnapshot,
+        TAG_MANUAL_PAUSE, TAG_MANUAL_RESUME, TAG_PAUSE, TAG_READY, TAG_RESUME, TAG_SYNC_DATA, WorldSnapshot,
         set_session_peers,
         snapshot::prelude::*,
     };
