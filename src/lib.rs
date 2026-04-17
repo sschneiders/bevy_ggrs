@@ -26,6 +26,15 @@ pub(crate) mod schedule_systems;
 pub(crate) mod snapshot;
 pub(crate) mod time;
 
+/// Reset the internal fixed-timestep accumulator.
+///
+/// During pauses, the accumulator grows unboundedly. Call this after unpausing
+/// or after session rebuilds to prevent burst `advance_frame` calls that could
+/// overflow ggrs's fixed-size input queue.
+pub fn reset_timestep_accumulator(world: &mut World) {
+    world.insert_resource(FixedTimestepData::default());
+}
+
 /// Convenient re-exports of the most commonly used types. Glob-import this to get started.
 pub mod prelude {
     pub use crate::{
@@ -98,7 +107,7 @@ pub enum Session<T: Config> {
 pub struct PlayerInputs<T: Config>(Vec<(T::Input, InputStatus)>);
 
 #[derive(Resource, Copy, Clone, Debug)]
-struct FixedTimestepData {
+pub(crate) struct FixedTimestepData {
     /// accumulated time. once enough time has been accumulated, an update is executed
     accumulator: Duration,
     /// boolean to see if we should run slow to let remote clients catch up

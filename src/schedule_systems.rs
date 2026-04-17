@@ -41,16 +41,44 @@ pub(crate) fn run_ggrs_schedules<T: Config>(world: &mut World) {
     };
     time_data.accumulator = time_data.accumulator.saturating_add(delta);
 
-    // no matter what, poll remotes and send responses
-    if let Some(mut session) = world.get_resource_mut::<Session<T>>() {
-        match &mut *session {
-            Session::P2P(session) => {
-                session.poll_remote_clients();
+    // Cap accumulator to prevent burst advance_frame calls that overflow ggrs's
+    // fixed-size input queue (128 slots). During pauses, the accumulator grows
+    // unboundedly. After unpause, the while loop would run hundreds of times,
+    // each calling advance_frame() → poll_remote_clients() → add_remote_input().
+    // The queue fills faster than discard_confirmed_frames can trim.
+    // Capping to 4 frames allows normal catch-up without risking overflow.
+    let max_accumulator = fps_delta * 4;
+    if time_data.accumulator > max_accumulator {
+        time_data.accumulator = max_accumulator;
+    }
+
+    // Poll remotes to keep the connection alive and complete sync handshakes.
+    // When paused with a Running session, skip polling to prevent input queue
+    // overflow — poll_remote_clients processes input messages even when paused,
+    // filling queues without discard_confirmed_frames ever running.
+    // When Synchronizing, we MUST poll to complete the initial sync handshake.
+    let should_poll = if let Some(session) = world.get_resource::<Session<T>>() {
+        match session {
+            Session::P2P(sess) => {
+                !paused || sess.current_state() != SessionState::Running
             }
-            Session::Spectator(session) => {
-                session.poll_remote_clients();
+            Session::Spectator(_) => !paused,
+            _ => false,
+        }
+    } else {
+        false
+    };
+    if should_poll {
+        if let Some(mut session) = world.get_resource_mut::<Session<T>>() {
+            match &mut *session {
+                Session::P2P(session) => {
+                    session.poll_remote_clients();
+                }
+                Session::Spectator(session) => {
+                    session.poll_remote_clients();
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 
