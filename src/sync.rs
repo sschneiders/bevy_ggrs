@@ -237,6 +237,7 @@ where
 
         if let Some(new_peer) = new_peer {
             info!("[SYNC] New peer detected, starting sync");
+            eprintln!("[SYNC] New peer detected, starting sync");
 
             // 1. Pause + mark active
             *world.resource_mut::<GgrsPaused>() = GgrsPaused(true);
@@ -285,6 +286,7 @@ where
             match msg[0] {
                 TAG_PAUSE => {
                     info!("[SYNC] Received pause from host");
+                    eprintln!("[SYNC] Received pause from host");
                     *world.resource_mut::<GgrsPaused>() = GgrsPaused(true);
                     reset_timestep_accumulator(world);
                     world.insert_resource(SyncActive(true));
@@ -311,6 +313,7 @@ where
             }
             if msg[0] == TAG_SYNC_DATA {
                 info!("[SYNC] Received snapshot from host");
+                eprintln!("[SYNC] Received snapshot from host");
                 *world.resource_mut::<WorldSnapshot>() = WorldSnapshot(msg[1..].to_vec());
                 *world.resource_mut::<GgrsPaused>() = GgrsPaused(true);
                 world.insert_resource(SyncActive(true));
