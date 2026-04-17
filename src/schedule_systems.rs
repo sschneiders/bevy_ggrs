@@ -306,6 +306,7 @@ pub(crate) fn handle_requests<T: Config>(requests: Vec<GgrsRequest<T>>, world: &
 
                 frame_count.0 += 1;
                 let frame = frame_count.0;
+                eprintln!("[ADVANCE] frame={}", frame);
 
                 debug!("advancing to frame: {}", frame);
                 world.insert_resource(PlayerInputs::<T>(inputs));
