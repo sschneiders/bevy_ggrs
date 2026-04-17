@@ -72,7 +72,12 @@ pub(crate) fn run_ggrs_schedules<T: Config>(world: &mut World) {
         if let Some(mut session) = world.get_resource_mut::<Session<T>>() {
             match &mut *session {
                 Session::P2P(session) => {
+                    let before = session.current_state();
                     session.poll_remote_clients();
+                    let after = session.current_state();
+                    if before != after {
+                        eprintln!("[POLL] Session state changed: {:?} → {:?}", before, after);
+                    }
                 }
                 Session::Spectator(session) => {
                     session.poll_remote_clients();
