@@ -53,14 +53,24 @@ pub(crate) fn run_ggrs_schedules<T: Config>(world: &mut World) {
     }
 
     // Poll remotes to keep the connection alive and complete sync handshakes.
-    // When paused with a Running session, skip polling to prevent input queue
-    // overflow — poll_remote_clients processes input messages even when paused,
-    // filling queues without discard_confirmed_frames ever running.
-    // When Synchronizing, we MUST poll to complete the initial sync handshake.
+    //
+    // When NOT paused: poll every frame (normal operation).
+    // When paused with Running session: poll at reduced rate to keep GGRS's internal
+    // protocol alive (keepalives, quality reports) without overflowing the 128-slot
+    // input queue. GGRS disconnects peers after 2s of silence by default.
+    // When Synchronizing: always poll to complete the initial sync handshake.
     let should_poll = if let Some(session) = world.get_resource::<Session<T>>() {
         match session {
             Session::P2P(sess) => {
-                !paused || sess.current_state() != SessionState::Running
+                if !paused {
+                    true
+                } else if sess.current_state() != SessionState::Running {
+                    true // Always poll during Synchronizing
+                } else {
+                    // Paused + Running: throttle to ~2Hz (every 30 frames at 60fps)
+                    // to keep keepalives flowing without filling the input queue.
+                    time_data.poll_throttle_every_n(30)
+                }
             }
             Session::Spectator(_) => !paused,
             _ => false,

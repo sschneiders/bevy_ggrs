@@ -118,6 +118,17 @@ pub(crate) struct FixedTimestepData {
     accumulator: Duration,
     /// boolean to see if we should run slow to let remote clients catch up
     run_slow: bool,
+    /// Frame counter for throttled polling during pause (incremented every call)
+    paused_poll_frame: u32,
+}
+
+impl FixedTimestepData {
+    /// Returns true every Nth call (simple frame-based throttle for paused polling).
+    /// At 60fps, polling every 30 frames ≈ once per 500ms.
+    fn poll_throttle_every_n(&mut self, n: u32) -> bool {
+        self.paused_poll_frame += 1;
+        self.paused_poll_frame % n == 0
+    }
 }
 
 impl Default for FixedTimestepData {
@@ -125,6 +136,7 @@ impl Default for FixedTimestepData {
         Self {
             accumulator: Duration::ZERO,
             run_slow: false,
+            paused_poll_frame: 0,
         }
     }
 }
