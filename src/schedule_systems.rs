@@ -172,6 +172,9 @@ pub(crate) fn run_p2p<C: Config>(world: &mut World, mut sess: P2PSession<C>) {
     world.insert_resource(LocalPlayers(sess.local_player_handles()));
 
     let running = sess.current_state() == SessionState::Running;
+    let state = sess.current_state();
+    let num_players = sess.num_players();
+    eprintln!("[RUN-P2P] state={:?} running={} num_players={}", state, running, num_players);
 
     if running {
         // get local player inputs
@@ -188,15 +191,23 @@ pub(crate) fn run_p2p<C: Config>(world: &mut World, mut sess: P2PSession<C>) {
     }
 
     let requests = running.then(|| sess.advance_frame());
+    eprintln!("[RUN-P2P] advance_frame result: {}", requests.as_ref().map(|r| r.as_ref().map(|_| "Ok").map_err(|e| format!("{:?}", e)).unwrap_or_default()).unwrap_or("None"));
 
     world.insert_resource(Session::P2P(sess));
 
     match requests {
-        Some(Ok(requests)) => handle_requests(requests, world),
+        Some(Ok(requests)) => {
+            eprintln!("[RUN-P2P] Handling {} requests", requests.len());
+            handle_requests(requests, world);
+        }
         Some(Err(GgrsError::PredictionThreshold)) => {
+            eprintln!("Skipping a frame: PredictionThreshold.");
             info!("Skipping a frame: PredictionThreshold.")
         }
-        Some(Err(e)) => warn!("{e}"),
+        Some(Err(e)) => {
+            eprintln!("[RUN-P2P] advance_frame error: {:?}", e);
+            warn!("{e}");
+        }
         None => {}
     }
 }
