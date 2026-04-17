@@ -332,8 +332,13 @@ where
 {
     let inbox: Vec<(T::Address, Vec<u8>)> = world.resource::<SyncInbox<T::Address>>().0.clone();
     world.resource_mut::<SyncInbox<T::Address>>().0.clear();
-    eprintln!("[HOST-WAITING] inbox has {} messages, new_peer={:?}", inbox.len(),
-        world.resource::<GgrsSyncState<T::Address>>().new_peer);
+    let new_peer = world.resource::<GgrsSyncState<T::Address>>().new_peer.clone();
+    eprintln!("[HOST-WAITING] inbox={} msgs, new_peer={:?}", inbox.len(), new_peer);
+    for (peer, msg) in &inbox {
+        if !msg.is_empty() {
+            eprintln!("  msg from {:?}: tag={:#x}", peer, msg[0]);
+        }
+    }
 
     let new_peer = world
         .resource::<GgrsSyncState<T::Address>>()
