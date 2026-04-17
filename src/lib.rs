@@ -20,10 +20,12 @@ use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, hash::Hash, marker::PhantomData, net::SocketAddr};
 
 pub use snapshot::*;
+pub use sync::*;
 pub use time::*;
 
 pub(crate) mod schedule_systems;
 pub(crate) mod snapshot;
+pub(crate) mod sync;
 pub(crate) mod time;
 
 /// Reset the internal fixed-timestep accumulator.
@@ -41,6 +43,9 @@ pub mod prelude {
         GgrsConfig, GgrsLockstep, GgrsMigration, GgrsPaused, GgrsPlugin, GgrsSchedule, GgrsTime, PlayerInputs, ReadInputs, Rollback,
         RollbackApp, RollbackFrameRate, RollbackId, Session, SyncTestMismatch,
         WorldSyncSnapshot, WorldSyncRegistry,
+        ConnectedPeers, IsHost, RebuildSession, SessionConfigData, SyncDeserialize,
+        SyncInbox, SyncOutbox, SyncSerialize, TAG_PAUSE, TAG_READY, TAG_RESUME, TAG_SYNC_DATA,
+        WorldSnapshot,
         snapshot::prelude::*,
     };
     pub use ggrs::{GgrsEvent, PlayerType, SessionBuilder};
@@ -244,6 +249,9 @@ impl<C: Config> Plugin for GgrsPlugin<C> {
             .init_resource::<crate::GgrsPaused>()
             .init_resource::<crate::GgrsLockstep>()
             .init_schedule(ReadInputs)
+            .init_schedule(sync::SyncSerialize)
+            .init_schedule(sync::SyncDeserialize)
+            .init_schedule(sync::RebuildSession)
             .edit_schedule(AdvanceWorld, |schedule| {
                 // AdvanceWorld is mostly a facilitator for GgrsSchedule, so SingleThreaded avoids overhead
                 // This can be overridden if desired.
@@ -262,7 +270,11 @@ impl<C: Config> Plugin for GgrsPlugin<C> {
             )
             .add_systems(
                 self.schedule,
-                schedule_systems::run_ggrs_schedules::<C>
+                (
+                    sync::run_mid_session_sync::<C>,
+                    schedule_systems::run_ggrs_schedules::<C>,
+                )
+                    .chain()
                     .in_set(RunGgrsSystems)
                     .after(InputSystems), // If we are in PreUpdate, run after input is read
             )
