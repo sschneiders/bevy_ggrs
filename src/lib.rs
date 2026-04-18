@@ -262,6 +262,9 @@ impl<C: Config> Plugin for GgrsPlugin<C> {
             .init_resource::<crate::GgrsPaused>()
             .init_resource::<crate::GgrsLockstep>()
             .init_schedule(ReadInputs)
+            .edit_schedule(ReadInputs, |schedule| {
+                schedule.set_executor_kind(ExecutorKind::SingleThreaded);
+            })
             .init_schedule(sync::SyncSerialize)
             .init_schedule(sync::SyncDeserialize)
             .init_schedule(sync::RebuildSession)
@@ -271,6 +274,7 @@ impl<C: Config> Plugin for GgrsPlugin<C> {
                 schedule.set_executor_kind(ExecutorKind::SingleThreaded);
             })
             .edit_schedule(GgrsSchedule, |schedule| {
+                schedule.set_executor_kind(ExecutorKind::SingleThreaded);
                 schedule.set_build_settings(ScheduleBuildSettings {
                     ambiguity_detection: LogLevel::Error,
                     ..default()
